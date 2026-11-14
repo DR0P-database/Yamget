@@ -36,15 +36,14 @@ class Aria2Engine:
                  rpc_timeout: float = 2, poll_interval: float = 0.2):
         """Создать движок; процесс aria2 запускается отдельно через start().
 
-        Args:
-            executable: Имя aria2c для поиска в PATH или путь к executable.
-            startup_timeout: Время ожидания готовности RPC после запуска
-                процесса, в секундах. По умолчанию 10.
-            rpc_timeout: Таймаут сетевых операций отдельного RPC-запроса,
-                в секундах. По умолчанию 2; при запуске ограничивается
-                оставшимся временем ожидания готовности.
-            poll_interval: Интервал между проверками готовности RPC и между
-                опросами состояния загрузки, в секундах. По умолчанию 0.2.
+        :param executable: Имя aria2c для поиска в PATH или путь к executable.
+        :param startup_timeout: Время ожидания готовности RPC после запуска
+            процесса, в секундах. По умолчанию 10.
+        :param rpc_timeout: Таймаут сетевых операций отдельного RPC-запроса,
+            в секундах. По умолчанию 2; при запуске ограничивается
+            оставшимся временем ожидания готовности.
+        :param poll_interval: Интервал между проверками готовности RPC и между
+            опросами состояния загрузки, в секундах. По умолчанию 0.2.
 
         HTTP-клиент управления обращается к loopback напрямую: ProxyHandler({})
         отключает использование прокси из окружения для RPC-запросов.
@@ -61,6 +60,10 @@ class Aria2Engine:
         self._opener = build_opener(ProxyHandler({}))
 
     def check_available(self) -> None:
+        """Проверить наличие исполняемого файла aria2.
+
+        :raises Aria2Error: Исполняемый файл не найден в PATH или по заданному пути.
+        """
         if shutil.which(self.executable) is None:
             raise Aria2Error("Не найден aria2c. Установите aria2 и добавьте его в PATH")
 
@@ -72,6 +75,13 @@ class Aria2Engine:
         self.close()
 
     def start(self) -> None:
+        """Запустить aria2 и дождаться готовности локального RPC.
+
+        Повторный вызов для работающего процесса ничего не меняет.
+
+        :raises Aria2Error: aria2 недоступен, завершился или не ответил вовремя.
+        :raises OSError: Не удалось выделить порт, создать конфиг или процесс.
+        """
         if self._process is not None:
             if self._process.poll() is not None:
                 raise Aria2Error("Процесс aria2 завершился")
@@ -115,6 +125,16 @@ class Aria2Engine:
             raise
 
     def _rpc(self, method: str, *params, timeout: float | None = None):
+        """Выполнить авторизованный запрос к локальному RPC aria2.
+
+        :param method: Имя RPC-метода без префикса aria2.
+        :param *params: Позиционные параметры RPC после токена авторизации.
+        :param timeout: Таймаут запроса в секундах; None использует rpc_timeout.
+
+        :returns: Значение поля result из ответа JSON-RPC.
+
+        :raises Aria2Error: Процесс недоступен, запрос отклонён или ответ некорректен.
+        """
         if self._process is None or self._process.poll() is not None:
             raise Aria2Error("Процесс aria2 не запущен или завершился")
         request_id = secrets.token_hex(8)
@@ -141,6 +161,16 @@ class Aria2Engine:
         return result["result"]
 
     def add(self, url: str, target: Path) -> str:
+        """Добавить загрузку в работающий движок.
+
+        :param url: Прямая HTTP(S)-ссылка на аудиофайл.
+        :param target: Путь файла назначения; передаётся aria2 как абсолютный путь.
+
+        :returns: GID, назначенный загрузке aria2.
+
+        :raises ValueError: Ссылка некорректна или использует другую схему.
+        :raises Aria2Error: Ошибка RPC или отсутствие GID в ответе.
+        """
         parsed = urlparse(url)
         if (parsed.scheme not in {"http", "https"} or not parsed.hostname
                 or any(char in url for char in "\r\n")):
@@ -162,6 +192,13 @@ class Aria2Engine:
         return gid
 
     def status(self, gid: str) -> DownloadProgress:
+        """Получить текущее состояние загрузки.
+
+        :param gid: Идентификатор загрузки aria2.
+        :returns: Статус, загруженные/общие байты и скорость в байтах в секунду.
+            Неизвестный или нулевой общий размер представлен как None.
+        :raises Aria2Error: Ошибка RPC или некорректные данные прогресса.
+        """
         data = self._rpc(
             "tellStatus", 
             gid,
@@ -179,12 +216,27 @@ class Aria2Engine:
             raise Aria2Error("Некорректное состояние загрузки aria2") from None
 
     def pause(self, gid: str) -> None:
+        """Запросить принудительную паузу загрузки.
+
+        :param gid: Идентификатор загрузки aria2.
+        :raises Aria2Error: RPC недоступен или операция отклонена.
+        """
         self._rpc("forcePause", gid)
 
     def resume(self, gid: str) -> None:
+        """Запросить продолжение загрузки.
+
+        :param gid: Идентификатор приостановленной загрузки aria2.
+        :raises Aria2Error: RPC недоступен или операция отклонена.
+        """
         self._rpc("unpause", gid)
 
     def cancel(self, gid: str) -> None:
+        """Запросить принудительное удаление загрузки из aria2.
+
+        :param gid: Идентификатор загрузки aria2.
+        :raises Aria2Error: RPC недоступен или операция отклонена.
+        """
         self._rpc("forceRemove", gid)
 
     def download(
@@ -193,6 +245,20 @@ class Aria2Engine:
         target: Path,
         on_progress: Callable[[DownloadProgress], None] | None = None
     ) -> None:
+        """Скачать файл и опрашивать прогресс до завершения.
+
+        :param url: Прямая HTTP(S)-ссылка.
+        :param target: Путь файла назначения.
+        :param on_progress: Callback с DownloadProgress при каждом опросе,
+            включая конечный статус. Исключения callback передаются наружу.
+
+        :raises DownloadCancelled: aria2 сообщил об удалении загрузки.
+        :raises Aria2Error: Ошибка RPC, передачи или отсутствие непустого файла.
+        :raises OSError: Ошибка проверки файла назначения.
+
+        Движок должен быть запущен заранее. При выходе незавершённая
+        передача отменяется, а результат удаляется из памяти aria2.
+        """
         gid = self.add(url, target)
         terminal = False
         try:
@@ -223,6 +289,11 @@ class Aria2Engine:
                     self.close()
 
     def close(self) -> None:
+        """Завершить процесс aria2 и удалить временный конфиг.
+
+        Если RPC-завершение не сработало, используются terminate и kill.
+        Повторный вызов после закрытия допустим.
+        """
         process = self._process
         try:
             if process is not None:

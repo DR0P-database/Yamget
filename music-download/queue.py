@@ -22,7 +22,12 @@ _R = TypeVar("_R")
 def _check_job(
     method: Callable[Concatenate[DownloadQueue, DownloadJob, _P], _R],
 ) -> Callable[Concatenate[DownloadQueue, DownloadJob, _P], _R]:
-    """Проверить принадлежность задания очереди перед вызовом метода."""
+    """Проверить принадлежность задания очереди перед вызовом метода.
+
+    :param method: Метод очереди с аргументами self, job и дополнительными параметрами.
+    :returns: Обёрнутый метод с сохранением результата и метаданных исходного метода.
+    :raises ValueError: При вызове обёртки задание не принадлежит очереди.
+    """
     @wraps(method)
     def wrapper(
         self: DownloadQueue, 
@@ -48,6 +53,17 @@ class JobState(str, Enum):
 
 @dataclass
 class DownloadJob:
+    """Состояние и настройки отдельной загрузки.
+
+    :ivar track: Исходная модель трека API.
+    :ivar bitrate: Желаемый битрейт MP3 в кбит/с; None — максимальный доступный.
+    :ivar state: Текущий этап выполнения задания.
+    :ivar result: Результат успешно завершённого скачивания или None.
+    :ivar error: Исключение неудачного задания или None.
+    :ivar progress: Последний полученный прогресс движка или None.
+    :ivar cancel_requested: Признак запроса отмены.
+    """
+
     track: Track
     bitrate: int | None = None
     state: JobState = JobState.PENDING
@@ -58,11 +74,16 @@ class DownloadJob:
 
     @property
     def gid(self) -> str | None:
+        """Вернуть GID из последнего прогресса или None до первого обновления."""
         return self.progress.gid if self.progress else None
 
 
 class DownloadQueue:
     def __init__(self, service: DownloadService):
+        """Создать последовательную очередь в памяти.
+
+        :param service: Сервис скачивания; очередь управляет его движком в run().
+        """
         self.service = service
         self.jobs: list[DownloadJob] = []
         self._pending: deque[DownloadJob] = deque()
@@ -83,18 +104,39 @@ class DownloadQueue:
 
     @_check_job
     def pause(self, job: DownloadJob) -> None:
+        """Запросить паузу загрузки.
+
+        :param job: Задание этой очереди.
+
+        :raises ValueError: Задание не принадлежит очереди или не имеет активной загрузки.
+        :raises Aria2Error: Движок отклонил операцию или недоступен.
+        """
         if job.state != JobState.RUNNING or job.gid is None:
             raise ValueError("У задания нет активной загрузки")
         self.service.engine.pause(job.gid)
 
     @_check_job
     def resume(self, job: DownloadJob) -> None:
+        """Запросить продолжение загрузки.
+
+        :param job: Задание этой очереди.
+
+        :raises ValueError: Задание не принадлежит очереди или не приостановлено.
+        :raises Aria2Error: Движок отклонил операцию или недоступен.
+        """
         if job.state != JobState.PAUSED or job.gid is None:
             raise ValueError("Загрузка не приостановлена")
         self.service.engine.resume(job.gid)
 
     @_check_job
     def cancel(self, job: DownloadJob) -> None:
+        """Запросить отмену задания.
+
+        :param job: Задание этой очереди.
+
+        :raises ValueError: Задание не принадлежит очереди.
+        :raises Aria2Error: Движок отклонил операцию или недоступен.
+        """
         if job.state in {JobState.COMPLETED, JobState.FAILED, JobState.CANCELLED}:
             return
         job.cancel_requested = True
@@ -104,10 +146,23 @@ class DownloadQueue:
             self.service.engine.cancel(job.gid)
 
     def _check_cancelled(self, job: DownloadJob) -> None:
+        """Прервать обработку при запросе отмены.
+
+        :param job: Проверяемое задание.
+
+        :raises DownloadCancelled: У задания установлен cancel_requested.
+        """
         if job.cancel_requested:
             raise DownloadCancelled("Загрузка отменена")
 
     def _progress(self, job: DownloadJob, progress: DownloadProgress) -> None:
+        """Обновить прогресс и состояние задания по данным движка.
+
+        :param job: Задание, для которого получен прогресс.
+        :param progress: Последнее состояние загрузки aria2.
+
+        :raises DownloadCancelled: До обновления состояния запрошена отмена.
+        """
         job.progress = progress
         self._check_cancelled(job)
         job.state = JobState.PAUSED if progress.status == "paused" else JobState.RUNNING
@@ -118,6 +173,14 @@ class DownloadQueue:
         overwrite: bool = False
     ) -> Iterator[DownloadJob]:
         """Последовательно выполнить задания с индивидуальными настройками качества.
+
+        :param directory: Общий каталог назначения для файлов очереди.
+        :param overwrite: Разрешить замену существующих файлов того же трека.
+
+        :yields: Обработанное или отменённое задание с итоговым состоянием.
+
+        :raises RuntimeError: Этот экземпляр очереди уже выполняется.
+        :raises Aria2Error: Не удалось запустить или закрыть движок.
 
         Движок работает до исчерпания очереди или закрытия итератора.
         Ошибка одного задания не прерывает остальные; отмена проверяется
