@@ -49,7 +49,6 @@ class JobState(str, Enum):
 @dataclass
 class DownloadJob:
     track: Track
-    codec: str = "mp3"
     bitrate: int | None = None
     state: JobState = JobState.PENDING
     result: DownloadResult | None = None
@@ -69,9 +68,15 @@ class DownloadQueue:
         self._pending: deque[DownloadJob] = deque()
         self._running = False
 
-    def add(self, track: Track, codec: str = "mp3",
-            bitrate: int | None = None) -> DownloadJob:
-        job = DownloadJob(track, codec=codec, bitrate=bitrate)
+    def add(self, track: Track, bitrate: int | None = None) -> DownloadJob:
+        """Добавить трек в конец очереди без обращения к API.
+
+        :param track: Библиотечная модель трека.
+        :param bitrate: Желаемый битрейт MP3; None — максимальный доступный.
+
+        :returns: Созданное задание в состоянии PENDING.
+        """
+        job = DownloadJob(track, bitrate=bitrate)
         self.jobs.append(job)
         self._pending.append(job)
         return job
@@ -132,7 +137,7 @@ class DownloadQueue:
                     job.state = JobState.RUNNING
                     try:
                         job.result = self.service.download(
-                            job.track, directory, job.codec, job.bitrate, overwrite,
+                            job.track, directory, bitrate=job.bitrate, overwrite=overwrite,
                             on_progress=partial(self._progress, job),
                             check_cancelled=partial(self._check_cancelled, job)
                         )
