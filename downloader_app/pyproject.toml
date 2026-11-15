@@ -1,0 +1,21 @@
+[project]
+name = "downloader-app"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["music-download"]
+
+[project.scripts]
+music-download = "downloader_app.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+dev-mode-exact = true
+
+[tool.hatch.build.targets.wheel]
+only-include = ["__init__.py", "main.py", "arguments.py", "application.py", "output.py", "ui"]
+
+[tool.hatch.build.targets.wheel.sources]
+"" = "downloader_app"
