@@ -1,16 +1,16 @@
-"""Sequential in-memory queue; API links are resolved when each job starts."""
+"""Последовательная очередь загрузки треков с выбранными альбомами."""
 from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from functools import partial, wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Concatenate, ParamSpec, TypeVar
 
 from music_download.engine import DownloadCancelled, DownloadProgress
-from music_download.models import DownloadResult, Track
+from music_download.models import DownloadContext, DownloadOptions, DownloadResult
 
 if TYPE_CHECKING:
     from music_download.service import DownloadService
@@ -53,19 +53,9 @@ class JobState(str, Enum):
 
 @dataclass
 class DownloadJob:
-    """Состояние и настройки отдельной загрузки.
-
-    :ivar track: Исходная модель трека API.
-    :ivar bitrate: Желаемый битрейт MP3 в кбит/с; None — максимальный доступный.
-    :ivar state: Текущий этап выполнения задания.
-    :ivar result: Результат успешно завершённого скачивания или None.
-    :ivar error: Исключение неудачного задания или None.
-    :ivar progress: Последний полученный прогресс движка или None.
-    :ivar cancel_requested: Признак запроса отмены.
-    """
-
-    track: Track
-    bitrate: int | None = None
+    """Состояние выполнения со ссылками на данные и настройки загрузки."""
+    context: DownloadContext
+    options: DownloadOptions = field(default_factory=DownloadOptions)
     state: JobState = JobState.PENDING
     result: DownloadResult | None = None
     error: Exception | None = None
@@ -89,15 +79,11 @@ class DownloadQueue:
         self._pending: deque[DownloadJob] = deque()
         self._running = False
 
-    def add(self, track: Track, bitrate: int | None = None) -> DownloadJob:
-        """Добавить трек в конец очереди без обращения к API.
-
-        :param track: Библиотечная модель трека.
-        :param bitrate: Желаемый битрейт MP3; None — максимальный доступный.
-
-        :returns: Созданное задание в состоянии PENDING.
-        """
-        job = DownloadJob(track, bitrate=bitrate)
+    def add(
+        self, context: DownloadContext, options: DownloadOptions | None = None,
+    ) -> DownloadJob:
+        """Добавить трек с выбранным альбомом и настройками без обращения к API."""
+        job = DownloadJob(context, options=options if options is not None else DownloadOptions())
         self.jobs.append(job)
         self._pending.append(job)
         return job
@@ -169,16 +155,12 @@ class DownloadQueue:
 
     def run(
         self, 
-        directory: Path, 
-        overwrite: bool = False
+        directory: Path,
     ) -> Iterator[DownloadJob]:
         """Последовательно выполнить задания с индивидуальными настройками качества.
 
         :param directory: Общий каталог назначения для файлов очереди.
-        :param overwrite: Разрешить замену существующих файлов того же трека.
-
         :yields: Обработанное или отменённое задание с итоговым состоянием.
-
         :raises RuntimeError: Этот экземпляр очереди уже выполняется.
         :raises Aria2Error: Не удалось запустить или закрыть движок.
 
@@ -200,9 +182,9 @@ class DownloadQueue:
                     job.state = JobState.RUNNING
                     try:
                         job.result = self.service.download(
-                            job.track, directory, bitrate=job.bitrate, overwrite=overwrite,
+                            job.context, directory, options=job.options,
                             on_progress=partial(self._progress, job),
-                            check_cancelled=partial(self._check_cancelled, job)
+                            check_cancelled=partial(self._check_cancelled, job),
                         )
                         job.state = JobState.COMPLETED
                     except DownloadCancelled:
