@@ -33,7 +33,7 @@ class Source:
         raise ValueError("Источник не содержит трека, альбома или плейлиста")
 
     @classmethod
-    def from_url(cls, value: str) -> "Source":
+    def from_url(cls, value: str) -> Source:
         """Извлекает ID из пути; параметры запроса и фрагмент игнорируются."""
         url = cls._parse_url(value.strip())
         path = url.path.removeprefix("/").removesuffix("/")
@@ -61,7 +61,7 @@ class Source:
         raise ValueError("Не удалось распознать ссылку на трек, альбом или плейлист")
 
     @classmethod
-    def parse(cls, value: str) -> "Source":
+    def parse(cls, value: str) -> Source:
         """Принимает ссылку, ID трека, «трек:альбом» или ключ плейлиста."""
         value = value.strip()
         if re.fullmatch(r"[0-9]+(?::[0-9]+)?", value):
