@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -15,6 +16,10 @@ from music_download.tags import read_track_id, write_tags
 
 if TYPE_CHECKING:
     from music_download.providers.yandex import YandexProvider
+
+
+logger = logging.getLogger(__name__)
+_DEFAULT_OPTIONS = DownloadOptions()
 
 
 def safe_name(value: str) -> str:
@@ -40,10 +45,10 @@ class DownloadService:
         self.engine = engine or Aria2Engine()
 
     def download(
-        self, 
+        self,
         context: DownloadContext,
         directory: Path,
-        options: DownloadOptions = DownloadOptions(),
+        options: DownloadOptions = _DEFAULT_OPTIONS,
         on_progress: Callable[[DownloadProgress], None] | None = None,
         check_cancelled: Callable[[], None] | None = None,
     ) -> DownloadResult:
@@ -69,11 +74,13 @@ class DownloadService:
         if check_cancelled:
             check_cancelled()
         audio_format = get_download_format(options.container)  # TODO: Добавить FLAC, m4a
-        
+
         track = context.track
+        logger.info("Обработка трека %s", track.id)
         directory = Path(directory)
         target = self._target_path(track, directory, audio_format.extension)
         if target.is_file() and target.stat().st_size > 0 and not options.overwrite:
+            logger.info("Трек %s уже скачан, пропуск", track.id)
             return DownloadResult(track, target, skipped=True)
 
         info = select_download_info(track, audio_format, options.bitrate)
@@ -81,11 +88,13 @@ class DownloadService:
         with NamedTemporaryFile(dir=directory, suffix=".part", delete=False) as handle:
             temporary = Path(handle.name)
         try:
+            logger.debug("Скачивание аудио трека %s", track.id)
             self.engine.download(info.get_direct_link(), temporary, on_progress=on_progress)
             if temporary.stat().st_size == 0:
                 raise OSError("Сервер вернул пустой файл")
             if check_cancelled:
                 check_cancelled()
+            logger.debug("Получение метаданных трека %s", track.id)
             metadata = self._fetch_metadata(track)
             if check_cancelled:
                 check_cancelled()
@@ -96,6 +105,7 @@ class DownloadService:
         finally:
             temporary.unlink(missing_ok=True)
             Path(str(temporary) + ".aria2").unlink(missing_ok=True)
+        logger.info("Трек %s сохранён", track.id)
         return DownloadResult(track, target)
 
     @staticmethod

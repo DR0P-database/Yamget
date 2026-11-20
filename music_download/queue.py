@@ -1,6 +1,8 @@
 """Последовательная очередь загрузки треков с выбранными альбомами."""
+
 from __future__ import annotations
 
+import logging
 from collections import deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -15,6 +17,9 @@ from music_download.models import DownloadContext, DownloadOptions, DownloadResu
 if TYPE_CHECKING:
     from music_download.service import DownloadService
 
+logger = logging.getLogger(__name__)
+
+
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
@@ -28,13 +33,9 @@ def _check_job(
     :returns: Обёрнутый метод с сохранением результата и метаданных исходного метода.
     :raises ValueError: При вызове обёртки задание не принадлежит очереди.
     """
+
     @wraps(method)
-    def wrapper(
-        self: DownloadQueue, 
-        job: DownloadJob,
-        *args: _P.args, 
-        **kwargs: _P.kwargs
-    ) -> _R:
+    def wrapper(self: DownloadQueue, job: DownloadJob, *args: _P.args, **kwargs: _P.kwargs) -> _R:
         if not any(candidate is job for candidate in self.jobs):
             raise ValueError("Задание не принадлежит этой очереди")
         return method(self, job, *args, **kwargs)
@@ -54,6 +55,7 @@ class JobState(str, Enum):
 @dataclass
 class DownloadJob:
     """Состояние выполнения со ссылками на данные и настройки загрузки."""
+
     context: DownloadContext
     options: DownloadOptions = field(default_factory=DownloadOptions)
     state: JobState = JobState.PENDING
@@ -80,12 +82,15 @@ class DownloadQueue:
         self._running = False
 
     def add(
-        self, context: DownloadContext, options: DownloadOptions | None = None,
+        self,
+        context: DownloadContext,
+        options: DownloadOptions | None = None,
     ) -> DownloadJob:
         """Добавить трек с выбранным альбомом и настройками без обращения к API."""
         job = DownloadJob(context, options=options if options is not None else DownloadOptions())
         self.jobs.append(job)
         self._pending.append(job)
+        logger.debug("Задание добавлено: трек=%s", context.track.id)
         return job
 
     @_check_job
@@ -100,6 +105,7 @@ class DownloadQueue:
         if job.state != JobState.RUNNING or job.gid is None:
             raise ValueError("У задания нет активной загрузки")
         self.service.engine.pause(job.gid)
+        logger.info("Запрошена пауза трека %s", job.context.track.id)
 
     @_check_job
     def resume(self, job: DownloadJob) -> None:
@@ -113,6 +119,7 @@ class DownloadQueue:
         if job.state != JobState.PAUSED or job.gid is None:
             raise ValueError("Загрузка не приостановлена")
         self.service.engine.resume(job.gid)
+        logger.info("Запрошено продолжение трека %s", job.context.track.id)
 
     @_check_job
     def cancel(self, job: DownloadJob) -> None:
@@ -125,6 +132,7 @@ class DownloadQueue:
         """
         if job.state in {JobState.COMPLETED, JobState.FAILED, JobState.CANCELLED}:
             return
+        logger.info("Запрошена отмена трека %s", job.context.track.id)
         job.cancel_requested = True
         if job.state == JobState.PENDING:
             job.state = JobState.CANCELLED
@@ -154,7 +162,7 @@ class DownloadQueue:
         job.state = JobState.PAUSED if progress.status == "paused" else JobState.RUNNING
 
     def run(
-        self, 
+        self,
         directory: Path,
     ) -> Iterator[DownloadJob]:
         """Последовательно выполнить задания с индивидуальными настройками качества.
@@ -172,6 +180,7 @@ class DownloadQueue:
         if self._running:
             raise RuntimeError("Очередь уже запущена")
         self._running = True
+        logger.info("Запуск очереди: заданий=%d", len(self._pending))
         try:
             with self.service.engine:
                 while self._pending:
@@ -180,16 +189,25 @@ class DownloadQueue:
                         yield job
                         continue
                     job.state = JobState.RUNNING
+                    logger.debug("Выполнение задания: трек=%s", job.context.track.id)
                     try:
                         job.result = self.service.download(
-                            job.context, directory, options=job.options,
+                            job.context,
+                            directory,
+                            options=job.options,
                             on_progress=partial(self._progress, job),
                             check_cancelled=partial(self._check_cancelled, job),
                         )
                         job.state = JobState.COMPLETED
                     except DownloadCancelled:
+                        logger.info("Задание отменено: трек=%s", job.context.track.id)
                         job.state = JobState.CANCELLED
                     except Exception as error:  # noqa: BLE001 - isolate failed queue jobs
+                        logger.error(
+                            "Ошибка задания: трек=%s, тип=%s",
+                            job.context.track.id,
+                            type(error).__name__,
+                        )
                         job.error = error
                         job.state = JobState.FAILED
                     except BaseException:
@@ -197,6 +215,7 @@ class DownloadQueue:
                         raise
                     yield job
         finally:
+            logger.info("Очередь остановлена: оставшихся заданий=%d", len(self._pending))
             self._running = False
             for pending in self._pending:
                 pending.state = JobState.CANCELLED

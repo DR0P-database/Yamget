@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import secrets
 import shutil
@@ -12,6 +13,8 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import ProxyHandler, Request, build_opener
+
+logger = logging.getLogger(__name__)
 
 
 class Aria2Error(OSError):
@@ -32,8 +35,14 @@ class DownloadProgress:
 
 
 class Aria2Engine:
-    def __init__(self, executable: str = "aria2c", *, startup_timeout: float = 10,
-                 rpc_timeout: float = 2, poll_interval: float = 0.2):
+    def __init__(
+        self,
+        executable: str = "aria2c",
+        *,
+        startup_timeout: float = 10,
+        rpc_timeout: float = 2,
+        poll_interval: float = 0.2,
+    ):
         """Создать движок; процесс aria2 запускается отдельно через start().
 
         :param executable: Имя aria2c для поиска в PATH или путь к executable.
@@ -64,7 +73,9 @@ class Aria2Engine:
 
         :raises Aria2Error: Исполняемый файл не найден в PATH или по заданному пути.
         """
+        logger.debug("Проверка доступности aria2c")
         if shutil.which(self.executable) is None:
+            logger.error("Исполняемый файл aria2c не найден")
             raise Aria2Error("Не найден aria2c. Установите aria2 и добавьте его в PATH")
 
     def __enter__(self):
@@ -86,6 +97,7 @@ class Aria2Engine:
             if self._process.poll() is not None:
                 raise Aria2Error("Процесс aria2 завершился")
             return
+        logger.info("Запуск процесса aria2")
         self.check_available()
         # aria2 needs a concrete port; a bind conflict is detected at startup.
         with socket.socket() as reservation:
@@ -97,26 +109,49 @@ class Aria2Engine:
         config = Path(self._config.name) / "aria2.conf"
         config.touch(mode=0o600)
         config.write_text(f"rpc-secret={self._secret}\n", encoding="utf-8")
-        command = [self.executable, f"--conf-path={config}", "--enable-rpc=true",
-                   "--rpc-listen-all=false", "--rpc-allow-origin-all=false",
-                   f"--rpc-listen-port={port}", "--disable-ipv6=true", "--daemon=false",
-                   "--stop-with-process=" + str(os.getpid()),
-                   "--max-concurrent-downloads=1", "--max-tries=3", "--retry-wait=2",
-                   "--connect-timeout=15", "--timeout=60", "--summary-interval=0",
-                   "--console-log-level=error", "--download-result=hide",
-                   "--file-allocation=none", "--max-connection-per-server=4", "--split=4"]
+        command = [
+            self.executable,
+            f"--conf-path={config}",
+            "--enable-rpc=true",
+            "--rpc-listen-all=false",
+            "--rpc-allow-origin-all=false",
+            f"--rpc-listen-port={port}",
+            "--disable-ipv6=true",
+            "--daemon=false",
+            "--stop-with-process=" + str(os.getpid()),
+            "--max-concurrent-downloads=1",
+            "--max-tries=3",
+            "--retry-wait=2",
+            "--connect-timeout=15",
+            "--timeout=60",
+            "--summary-interval=0",
+            "--console-log-level=error",
+            "--download-result=hide",
+            "--file-allocation=none",
+            "--max-connection-per-server=4",
+            "--split=4",
+        ]
         try:
-            self._process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
-                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self._process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
             deadline = time.monotonic() + self.startup_timeout
             while True:
                 try:
-                    self._rpc("getVersion", timeout=min(self.rpc_timeout,
-                              max(0.01, deadline - time.monotonic())))
+                    self._rpc(
+                        "getVersion",
+                        timeout=min(self.rpc_timeout, max(0.01, deadline - time.monotonic())),
+                    )
+                    logger.info("RPC aria2 готов")
                     return
                 except Aria2Error:
                     if self._process.poll() is not None:
-                        raise Aria2Error("aria2 не запустился: проверьте executable и RPC-порт") from None
+                        raise Aria2Error(
+                            "aria2 не запустился: проверьте executable и RPC-порт"
+                        ) from None
                     if time.monotonic() >= deadline:
                         raise Aria2Error("Истекло время ожидания готовности RPC aria2") from None
                     time.sleep(min(self.poll_interval, max(0, deadline - time.monotonic())))
@@ -137,15 +172,20 @@ class Aria2Engine:
         """
         if self._process is None or self._process.poll() is not None:
             raise Aria2Error("Процесс aria2 не запущен или завершился")
+        if method != "tellStatus":
+            logger.debug("RPC aria2: %s", method)
         request_id = secrets.token_hex(8)
         payload = {
-            "jsonrpc": "2.0", 
-            "id": request_id, 
+            "jsonrpc": "2.0",
+            "id": request_id,
             "method": f"aria2.{method}",
-            "params": [f"token:{self._secret}", *params]
+            "params": [f"token:{self._secret}", *params],
         }
-        request = Request(self._endpoint, data=json.dumps(payload).encode("utf-8"),
-                          headers={"Content-Type": "application/json"})
+        request = Request(
+            self._endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
         try:
             with self._opener.open(request, timeout=timeout or self.rpc_timeout) as response:
                 result = json.load(response)
@@ -172,23 +212,27 @@ class Aria2Engine:
         :raises Aria2Error: Ошибка RPC или отсутствие GID в ответе.
         """
         parsed = urlparse(url)
-        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
-                or any(char in url for char in "\r\n")):
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or any(char in url for char in "\r\n")
+        ):
             raise ValueError("aria2 ожидает корректную HTTP(S)-ссылку")
         target = target.resolve()
         gid = self._rpc(
-            "addUri", 
-            [url], 
+            "addUri",
+            [url],
             {
-                "dir": str(target.parent), 
+                "dir": str(target.parent),
                 "out": target.name,
-                "allow-overwrite": "true", 
+                "allow-overwrite": "true",
                 "auto-file-renaming": "false",
-                "continue": "false"
-            }
+                "continue": "false",
+            },
         )
         if not isinstance(gid, str) or not gid:
             raise Aria2Error("aria2 не вернул GID загрузки")
+        logger.debug("Передача добавлена: gid=%s", gid)
         return gid
 
     def status(self, gid: str) -> DownloadProgress:
@@ -200,17 +244,17 @@ class Aria2Engine:
         :raises Aria2Error: Ошибка RPC или некорректные данные прогресса.
         """
         data = self._rpc(
-            "tellStatus", 
+            "tellStatus",
             gid,
-            ["status", "completedLength", "totalLength", "downloadSpeed", "errorCode"]
+            ["status", "completedLength", "totalLength", "downloadSpeed", "errorCode"],
         )
         try:
             return DownloadProgress(
-                gid, 
-                data["status"], 
+                gid,
+                data["status"],
                 int(data["completedLength"]),
-                int(data["totalLength"]) or None, 
-                int(data["downloadSpeed"])
+                int(data["totalLength"]) or None,
+                int(data["downloadSpeed"]),
             )
         except (KeyError, TypeError, ValueError):
             raise Aria2Error("Некорректное состояние загрузки aria2") from None
@@ -221,6 +265,7 @@ class Aria2Engine:
         :param gid: Идентификатор загрузки aria2.
         :raises Aria2Error: RPC недоступен или операция отклонена.
         """
+        logger.debug("Пауза передачи: gid=%s", gid)
         self._rpc("forcePause", gid)
 
     def resume(self, gid: str) -> None:
@@ -229,6 +274,7 @@ class Aria2Engine:
         :param gid: Идентификатор приостановленной загрузки aria2.
         :raises Aria2Error: RPC недоступен или операция отклонена.
         """
+        logger.debug("Продолжение передачи: gid=%s", gid)
         self._rpc("unpause", gid)
 
     def cancel(self, gid: str) -> None:
@@ -237,13 +283,11 @@ class Aria2Engine:
         :param gid: Идентификатор загрузки aria2.
         :raises Aria2Error: RPC недоступен или операция отклонена.
         """
+        logger.debug("Отмена передачи: gid=%s", gid)
         self._rpc("forceRemove", gid)
 
     def download(
-        self, 
-        url: str, 
-        target: Path,
-        on_progress: Callable[[DownloadProgress], None] | None = None
+        self, url: str, target: Path, on_progress: Callable[[DownloadProgress], None] | None = None
     ) -> None:
         """Скачать файл и опрашивать прогресс до завершения.
 
@@ -268,6 +312,12 @@ class Aria2Engine:
                 if on_progress:
                     on_progress(progress)
                 if terminal:
+                    logger.debug(
+                        "Передача завершена: gid=%s, статус=%s, байт=%d",
+                        gid,
+                        progress.status,
+                        progress.completed_bytes,
+                    )
                     if progress.status == "removed":
                         raise DownloadCancelled("Загрузка отменена")
                     if progress.status == "error":
@@ -295,16 +345,20 @@ class Aria2Engine:
         Повторный вызов после закрытия допустим.
         """
         process = self._process
+        if process is not None:
+            logger.info("Остановка процесса aria2")
         try:
             if process is not None:
                 if process.poll() is None:
                     try:
                         self._rpc("forceShutdown")
                     except Aria2Error:
+                        logger.warning("RPC-завершение aria2 не удалось, отправляется terminate")
                         process.terminate()
                     try:
                         process.wait(timeout=5)
                     except subprocess.TimeoutExpired:
+                        logger.warning("aria2 не завершился вовремя, отправляется kill")
                         process.kill()
                         process.wait()
                 else:

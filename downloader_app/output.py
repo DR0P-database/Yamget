@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-import sys
+import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from music_download.queue import DownloadJob
 
 
-def print_track_error(track_id: str, error: Exception) -> None:
-    print(f"Ошибка трека {track_id}: {error}", file=sys.stderr)
+logger = logging.getLogger(__name__)
+
+
+def report_track_error(track_id: str, error: Exception) -> None:
+    logger.error("Ошибка трека %s: %s", track_id, type(error).__name__)
 
 
 def report_job(job: DownloadJob) -> bool:
@@ -18,14 +21,14 @@ def report_job(job: DownloadJob) -> bool:
     from music_download.queue import JobState
 
     if job.state == JobState.CANCELLED:
-        print(f"Отменён: {job.context.track.id}", file=sys.stderr)
+        logger.warning("Отменён: %s", job.context.track.id)
         return True
     if job.error is not None:
-        print_track_error(str(job.context.track.id), job.error)
+        report_track_error(str(job.context.track.id), job.error)
         return True
     if job.result is None:
         raise ValueError(f"Нет результата загрузки трека {job.context.track.id}")
 
     status = "Пропущен" if job.result.skipped else "Скачан"
-    print(f"{status}: {job.result.path}")
+    logger.info("%s: %s", status, job.result.path)
     return False

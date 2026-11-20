@@ -1,4 +1,6 @@
 """Metadata mapping following ymd's set_tags conventions."""
+
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,6 +28,9 @@ from yandex_music import Album, Track
 from music_download.models import DownloadContext, DownloadOptions, TrackMetadata
 from music_download.sources import Source
 
+logger = logging.getLogger(__name__)
+
+
 _EMPTY_METADATA = TrackMetadata()
 _DEFAULT_OPTIONS = DownloadOptions()
 
@@ -38,6 +43,7 @@ def read_track_id(path: Path) -> str | None:
     :raises OSError: Файл не удалось прочитать.
     :raises mutagen.MutagenError: ID3-теги повреждены и не могут быть разобраны.
     """
+    logger.debug("Чтение ID трека из ID3")
     try:
         tags = ID3(path)
     except ID3NoHeaderError:
@@ -126,13 +132,19 @@ def _cover_mime(cover: bytes | None) -> str | None:
 
 
 def _write_mp3(
-    audio: MP3, values: _TagValues, metadata: TrackMetadata, mime: str | None,
+    audio: MP3,
+    values: _TagValues,
+    metadata: TrackMetadata,
+    mime: str | None,
 ) -> None:
     """Записать ID3-фреймы, текст и обложку MP3."""
     frames = [
-        (TIT2, values.title), (TALB, values.album),
-        (TPE1, values.artists), (TPE2, values.album_artists),
-        (TDRC, values.date), (TCON, values.genre),
+        (TIT2, values.title),
+        (TALB, values.album),
+        (TPE1, values.artists),
+        (TPE2, values.album_artists),
+        (TDRC, values.date),
+        (TCON, values.genre),
         (TRCK, str(values.number) if values.number else None),
         (TPOS, str(values.disc) if values.disc else None),
     ]
@@ -144,20 +156,32 @@ def _write_mp3(
         audio.tags.add(USLT(encoding=3, text=metadata.lyrics))
     if metadata.cover is not None:
         audio.tags.delall("APIC")
-        audio.tags.add(APIC(
-            encoding=3, mime=mime, type=3, data=metadata.cover,
-        ))
+        audio.tags.add(
+            APIC(
+                encoding=3,
+                mime=mime,
+                type=3,
+                data=metadata.cover,
+            )
+        )
 
 
 def _write_m4a(
-    audio: MP4, values: _TagValues, metadata: TrackMetadata, mime: str | None,
+    audio: MP4,
+    values: _TagValues,
+    metadata: TrackMetadata,
+    mime: str | None,
 ) -> None:
     """Записать атомы метаданных M4A."""
     atoms = {
-        "\xa9nam": values.title, "\xa9alb": values.album,
-        "\xa9ART": "; ".join(values.artists), "aART": "; ".join(values.album_artists),
-        "\xa9day": values.date, "\xa9gen": values.genre,
-        "\xa9lyr": metadata.lyrics, "\xa9cmt": values.url,
+        "\xa9nam": values.title,
+        "\xa9alb": values.album,
+        "\xa9ART": "; ".join(values.artists),
+        "aART": "; ".join(values.album_artists),
+        "\xa9day": values.date,
+        "\xa9gen": values.genre,
+        "\xa9lyr": metadata.lyrics,
+        "\xa9cmt": values.url,
     }
     for key, value in atoms.items():
         if value:
@@ -172,15 +196,23 @@ def _write_m4a(
 
 
 def _write_flac(
-    audio: FLAC, values: _TagValues, metadata: TrackMetadata, mime: str | None,
+    audio: FLAC,
+    values: _TagValues,
+    metadata: TrackMetadata,
+    mime: str | None,
 ) -> None:
     """Записать Vorbis Comments и обложку FLAC."""
     comments = {
-        "title": values.title, "album": values.album, "artist": values.artists,
-        "albumartist": values.album_artists, "date": values.date, "genre": values.genre,
+        "title": values.title,
+        "album": values.album,
+        "artist": values.artists,
+        "albumartist": values.album_artists,
+        "date": values.date,
+        "genre": values.genre,
         "tracknumber": str(values.number) if values.number else None,
         "discnumber": str(values.disc) if values.disc else None,
-        "lyrics": metadata.lyrics, "comment": values.url,
+        "lyrics": metadata.lyrics,
+        "comment": values.url,
     }
     for key, value in comments.items():
         if value:
@@ -211,6 +243,7 @@ def write_tags(
     :raises OSError: Ошибка чтения или записи файла.
     :raises mutagen.MutagenError: Ошибка разбора аудиофайла или записи тегов.
     """
+    logger.debug("Запись тегов: трек=%s, контейнер=%s", context.track.id, options.container)
     handlers = {
         "mp3": (MP3, _write_mp3),
         "m4a": (MP4, _write_m4a),
@@ -226,3 +259,4 @@ def write_tags(
         audio.add_tags()
     writer(audio, values, metadata, mime)
     audio.save()
+    logger.debug("Теги трека %s записаны", context.track.id)

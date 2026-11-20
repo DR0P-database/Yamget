@@ -1,10 +1,15 @@
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TypeVar
 
-from music_download.sources import Source
 from yandex_music import Album, Client, Playlist, Track
 from yandex_music.exceptions import YandexMusicError
+
+from music_download.sources import Source
+
+logger = logging.getLogger(__name__)
+
 
 Model = TypeVar("Model", Track, Album, Playlist)
 
@@ -19,12 +24,16 @@ class PlaylistEntry:
 
 class YandexProvider:
     """Тонкий провайдер над моделями и методами yandex-music."""
+
     def __init__(self, client: Client):
         self.client = client
 
     @classmethod
     def from_token(cls, token: str) -> "YandexProvider":
-        return cls(Client(token).init())
+        logger.debug("Авторизация в Яндекс Музыке")
+        provider = cls(Client(token).init())
+        logger.info("Авторизация в Яндекс Музыке выполнена")
+        return provider
 
     @staticmethod
     def _require_available(value: object, model: type[Model], label: str) -> Model:
@@ -44,25 +53,27 @@ class YandexProvider:
                 identifier = f"{source.track_id}:{source.album_id}"
             case _:
                 raise ValueError("Ожидается ID трека или ссылка на трек")
+        logger.debug("Получение трека %s", identifier)
         tracks = self.client.tracks([identifier])
-        return self._require_available(
-            tracks[0] if tracks else None, Track, f"Трек {identifier}")
+        return self._require_available(tracks[0] if tracks else None, Track, f"Трек {identifier}")
 
     def album_tracks(self, album_id: str) -> list[Track]:
         """Возвращает треки альбома в порядке дисков и позиций."""
-        album = self._require_available(
-            self.client.albums_with_tracks(album_id), Album, "Альбом")
+        logger.debug("Получение треков альбома %s", album_id)
+        album = self._require_available(self.client.albums_with_tracks(album_id), Album, "Альбом")
         if album.volumes is None:
             raise ValueError("API не вернул треки альбома")
         return [track for volume in album.volumes for track in volume]
 
     def playlist(self, user: str, kind: int) -> Playlist:
+        logger.debug("Получение плейлиста по владельцу и ID")
         return self._require_available(
-            self.client.users_playlists(kind, user_id=user), Playlist, "Плейлист")
+            self.client.users_playlists(kind, user_id=user), Playlist, "Плейлист"
+        )
 
     def playlist_by_key(self, playlist_key: str) -> Playlist:
-        return self._require_available(
-            self.client.playlist(playlist_key), Playlist, "Плейлист")
+        logger.debug("Получение плейлиста по ключу")
+        return self._require_available(self.client.playlist(playlist_key), Playlist, "Плейлист")
 
     def resolve_source(self, source: Source | str) -> Iterator[PlaylistEntry]:
         """Разрешить источник по kind, сохранив порядок и ошибки плейлиста.
@@ -77,6 +88,7 @@ class YandexProvider:
         """
         if isinstance(source, str):
             source = Source.parse(source)
+        logger.debug("Получение записей источника: тип=%s", source.kind)
         match source.kind:
             case "track" | "album_track" | "playlist_track":
                 tracks = (self.track(source),)
@@ -89,10 +101,9 @@ class YandexProvider:
                     playlist = self.playlist(source.user_id, source.playlist_id)
                 yield from self.resolve_playlist(playlist)
                 return
-        
+
         yield from (
-            PlaylistEntry(index, str(track.id), track=track)
-            for index, track in enumerate(tracks)
+            PlaylistEntry(index, str(track.id), track=track) for index, track in enumerate(tracks)
         )
 
     def resolve_playlist(self, playlist: Playlist) -> Iterator[PlaylistEntry]:
@@ -116,6 +127,7 @@ class YandexProvider:
                 else:
                     track = self._require_available(track, Track, f"Трек {identifier}")
             except (YandexMusicError, ValueError) as error:
+                logger.warning("Не удалось получить трек %s: %s", identifier, type(error).__name__)
                 yield PlaylistEntry(index, identifier, error=error)
             else:
                 yield PlaylistEntry(index, identifier, track=track)

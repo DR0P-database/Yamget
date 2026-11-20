@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from music_download.sources import Source, positive_id
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -17,6 +20,7 @@ class CliOptions:
     output: Path
     bitrate: int | None
     overwrite: bool
+    log_level: str = "INFO"
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -43,6 +47,13 @@ def create_parser() -> argparse.ArgumentParser:
         "--overwrite",
         action="store_true",
         help="Заменить существующий файл после успешной загрузки",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str.upper,
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default="INFO",
+        help="Уровень логирования (по умолчанию INFO)",
     )
     return parser
 
@@ -78,4 +89,5 @@ def parse_options(argv: Sequence[str] | None = None) -> tuple[CliOptions, str]:
     if not token or not token.strip():
         parser.error("Задайте переменную окружения YANDEX_MUSIC_TOKEN")
 
-    return CliOptions(source, args.output, args.bitrate, args.overwrite), token
+    logger.debug("Аргументы проверены: тип источника=%s", source.kind)
+    return CliOptions(source, args.output, args.bitrate, args.overwrite, args.log_level), token

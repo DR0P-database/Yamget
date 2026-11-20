@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import SplitResult, unquote, urlsplit
 
-DOMAINS = frozenset({
-    "music.yandex.ru", "music.yandex.com", "music.yandex.kz", "music.yandex.by",
-})
+logger = logging.getLogger(__name__)
+
+
+DOMAINS = frozenset(
+    {
+        "music.yandex.ru",
+        "music.yandex.com",
+        "music.yandex.kz",
+        "music.yandex.by",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +46,7 @@ class Source:
     @classmethod
     def from_url(cls, value: str) -> Source:
         """Извлекает ID из пути; параметры запроса и фрагмент игнорируются."""
+        logger.debug("Разбор ссылки на источник")
         url = cls._parse_url(value.strip())
         path = url.path.removeprefix("/").removesuffix("/")
         parts = [unquote(part) for part in path.split("/")]
@@ -65,6 +75,7 @@ class Source:
     @classmethod
     def parse(cls, value: str) -> Source:
         """Принимает ссылку, ID трека, «трек:альбом» или ключ плейлиста."""
+        logger.debug("Разбор источника без вывода исходной строки")
         value = value.strip()
         if re.fullmatch(r"[0-9]+(?::[0-9]+)?", value):
             track_id, _, album_id = value.partition(":")
@@ -83,9 +94,13 @@ class Source:
 
         if not url.scheme and not url.netloc and value.startswith("/users/"):
             return url
-        if (url.scheme != "https" or url.hostname not in DOMAINS
-                or url.username is not None or url.password is not None
-                or port not in (None, 443)):
+        if (
+            url.scheme != "https"
+            or url.hostname not in DOMAINS
+            or url.username is not None
+            or url.password is not None
+            or port not in (None, 443)
+        ):
             raise ValueError("Укажите HTTPS-ссылку Яндекс Музыки")
         return url
 
