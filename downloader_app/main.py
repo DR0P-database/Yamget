@@ -34,13 +34,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     from yandex_music.exceptions import YandexMusicError
 
     from .application import run_download
+    from .output import describe_error
 
     try:
         exit_code = run_download(options, token)
         logger.info("CLI завершён: код=%d", exit_code)
         return exit_code
     except (YandexMusicError, MutagenError, ValueError, OSError) as error:
-        logger.error("Загрузка завершилась ошибкой: %s", type(error).__name__)
+        logger.error("Загрузка завершилась ошибкой: %s", describe_error(error))
         return 1
     except KeyboardInterrupt:
         logger.info("Загрузка прервана пользователем")

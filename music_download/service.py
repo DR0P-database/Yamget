@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Callable
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -12,7 +11,8 @@ from yandex_music import Track
 from music_download.engine import Aria2Engine, DownloadProgress
 from music_download.formats import get_download_format, select_download_info
 from music_download.models import DownloadContext, DownloadOptions, DownloadResult, TrackMetadata
-from music_download.tags import read_track_id, write_tags
+from music_download.paths import ensure_inside, select_target_path
+from music_download.tags import write_tags
 
 if TYPE_CHECKING:
     from music_download.providers.yandex import YandexProvider
@@ -20,17 +20,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _DEFAULT_OPTIONS = DownloadOptions()
-
-
-def safe_name(value: str) -> str:
-    """Подготовить компонент имени файла.
-
-    :param value: Исходное название.
-
-    :returns: Название без запрещённых символов и крайних точек/пробелов;
-        ``track``, если после очистки строка пуста.
-    """
-    return re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value).strip(" .") or "track"
 
 
 class DownloadService:
@@ -56,7 +45,7 @@ class DownloadService:
 
         :param context: Трек и выбранный альбом.
         :param directory: Каталог назначения; создаётся при необходимости.
-        :param options: Контейнер, битрейт и режим замены; None — настройки по умолчанию.
+        :param options: Контейнер, битрейт, шаблон пути и режим замены.
         :param on_progress: Callback движка с текущим DownloadProgress.
         :param check_cancelled: Callback без аргументов, выбрасывающий
             DownloadCancelled при запросе отмены; вызывается между этапами.
@@ -68,7 +57,7 @@ class DownloadService:
         :raises DownloadCancelled: Загрузка отменена движком или callback.
         :raises OSError: Ошибка движка/файловой системы или пустой аудиофайл.
 
-        Имя файла содержит название; при конфликте добавляется ID трека.
+        Путь строится по шаблону; при конфликте имени добавляется ID трека.
         Ошибки API и записи тегов передаются вызывающему коду.
         """
         if check_cancelled:
@@ -78,14 +67,16 @@ class DownloadService:
         track = context.track
         logger.info("Обработка трека %s", track.id)
         directory = Path(directory)
-        target = self._target_path(track, directory, audio_format.extension)
+        target = select_target_path(
+            directory, context, options.path_template, audio_format.extension
+        )
         if target.is_file() and target.stat().st_size > 0 and not options.overwrite:
             logger.info("Трек %s уже скачан, пропуск", track.id)
             return DownloadResult(track, target, skipped=True)
 
         info = select_download_info(track, audio_format, options.bitrate)
-        directory.mkdir(parents=True, exist_ok=True)
-        with NamedTemporaryFile(dir=directory, suffix=".part", delete=False) as handle:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with NamedTemporaryFile(dir=target.parent, suffix=".part", delete=False) as handle:
             temporary = Path(handle.name)
         try:
             logger.debug("Скачивание аудио трека %s", track.id)
@@ -101,33 +92,13 @@ class DownloadService:
             write_tags(temporary, context, metadata=metadata, options=options)
             if check_cancelled:
                 check_cancelled()
+            ensure_inside(directory, target)
             temporary.replace(target)
         finally:
             temporary.unlink(missing_ok=True)
             Path(str(temporary) + ".aria2").unlink(missing_ok=True)
         logger.info("Трек %s сохранён", track.id)
         return DownloadResult(track, target)
-
-    @staticmethod
-    def _target_path(track: Track, directory: Path, extension: str) -> Path:
-        """Выбрать имя файла с учётом ID существующего трека.
-
-        :param track: Трек, для которого выбирается имя.
-        :param directory: Каталог назначения.
-        :param extension: Расширение поддерживаемого формата, включая точку.
-        :returns: Путь файла с названием трека или названием и ID при конфликте.
-        :raises FileExistsError: Имя с ID также занято другим или неизвестным треком.
-        :raises OSError: Не удалось прочитать существующий файл.
-        """
-        name = safe_name(track.title).encode("utf-8")[:160].decode("utf-8", errors="ignore")
-        track_id = safe_name(str(track.id))
-
-        target = directory / f"{name}{extension}"
-        if target.exists() and read_track_id(target) != str(track.id):
-            target = directory / f"{name} [{track_id}]{extension}"
-            if target.exists() and read_track_id(target) != str(track.id):
-                raise FileExistsError(f"Файл занят другим или неизвестным треком: {target}")
-        return target
 
     @staticmethod
     def _fetch_metadata(track: Track) -> TrackMetadata:

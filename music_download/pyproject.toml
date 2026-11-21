@@ -2,7 +2,7 @@
 name = "music-download"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["yandex-music", "mutagen>=1.47"]
+dependencies = ["yandex-music", "mutagen>=1.47", "pathvalidate>=3.3,<4"]
 
 
 [build-system]
@@ -13,7 +13,7 @@ build-backend = "hatchling.build"
 dev-mode-exact = true
 
 [tool.hatch.build.targets.wheel]
-only-include = ["__init__.py", "engine.py", "formats.py", "models.py", "queue.py", "service.py", "sources.py", "tags.py", "providers"]
+only-include = ["__init__.py", "engine.py", "formats.py", "models.py", "paths.py", "queue.py", "service.py", "sources.py", "tags.py", "providers"]
 
 [tool.hatch.build.targets.wheel.sources]
 "" = "music_download"

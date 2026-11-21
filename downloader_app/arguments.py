@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from music_download.paths import DEFAULT_TEMPLATE, PathTemplate
 from music_download.sources import Source, positive_id
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ class CliOptions:
     bitrate: int | None
     overwrite: bool
     log_level: str = "INFO"
+    path_template: PathTemplate = DEFAULT_TEMPLATE
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -54,6 +56,15 @@ def create_parser() -> argparse.ArgumentParser:
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         default="INFO",
         help="Уровень логирования (по умолчанию INFO)",
+    )
+    parser.add_argument(
+        "--path-template",
+        type=PathTemplate,
+        default=DEFAULT_TEMPLATE,
+        help=(
+            "Путь внутри --output без расширения (по умолчанию {title}). "
+            "Поля: artist, album, title, track_id, album_id, track_number, disc_number, year"
+        ),
     )
     return parser
 
@@ -90,4 +101,11 @@ def parse_options(argv: Sequence[str] | None = None) -> tuple[CliOptions, str]:
         parser.error("Задайте переменную окружения YANDEX_MUSIC_TOKEN")
 
     logger.debug("Аргументы проверены: тип источника=%s", source.kind)
-    return CliOptions(source, args.output, args.bitrate, args.overwrite, args.log_level), token
+    return CliOptions(
+        source=source,
+        output=args.output,
+        bitrate=args.bitrate,
+        overwrite=args.overwrite,
+        log_level=args.log_level,
+        path_template=args.path_template,
+    ), token

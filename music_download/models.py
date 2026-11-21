@@ -4,6 +4,8 @@ from pathlib import Path
 
 from yandex_music import Album, Track
 
+from music_download.paths import DEFAULT_TEMPLATE, PathTemplate
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,6 +48,11 @@ class DownloadOptions:
     overwrite: bool = False
     container: str = "mp3"
     bitrate: int | None = None
+    path_template: PathTemplate | str = DEFAULT_TEMPLATE
+
+    def __post_init__(self) -> None:
+        if isinstance(self.path_template, str):
+            object.__setattr__(self, "path_template", PathTemplate(self.path_template))
 
 
 @dataclass(frozen=True)

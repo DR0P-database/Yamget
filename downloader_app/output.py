@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from music_download.providers.yandex import ResourceError
+
 if TYPE_CHECKING:
     from music_download.queue import DownloadJob
 
@@ -12,8 +14,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def describe_error(error: Exception) -> str:
+    """Показать известную причину, не раскрывая произвольный ответ API."""
+    return error.reason if isinstance(error, ResourceError) else type(error).__name__
+
+
 def report_track_error(track_id: str, error: Exception) -> None:
-    logger.error("Ошибка трека %s: %s", track_id, type(error).__name__)
+    logger.error("Ошибка трека %s: %s", track_id, describe_error(error))
 
 
 def report_job(job: DownloadJob) -> bool:

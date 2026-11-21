@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from yandex_music import Album, Client, Playlist, Track
 from yandex_music.exceptions import YandexMusicError
@@ -12,6 +12,14 @@ logger = logging.getLogger(__name__)
 
 
 Model = TypeVar("Model", Track, Album, Playlist)
+
+
+class ResourceError(ValueError):
+    """Контролируемая причина отсутствия объекта без содержимого ответа API."""
+
+    def __init__(self, label: str, reason: Literal["не найден", "недоступен"]):
+        self.reason = reason
+        super().__init__(f"{label} {reason}")
 
 
 @dataclass(frozen=True)
@@ -39,9 +47,9 @@ class YandexProvider:
     def _require_available(value: object, model: type[Model], label: str) -> Model:
         """Проверить тип и доступность объекта, возвращённого API."""
         if not isinstance(value, model):
-            raise ValueError(f"{label} не найден")  # noqa: TRY004 - API returned no matching model
+            raise ResourceError(label, "не найден")
         if value.available is False:
-            raise ValueError(f"{label} недоступен")
+            raise ResourceError(label, "недоступен")
         return value
 
     def track(self, track_id: str | Source) -> Track:
@@ -127,7 +135,7 @@ class YandexProvider:
                 else:
                     track = self._require_available(track, Track, f"Трек {identifier}")
             except (YandexMusicError, ValueError) as error:
-                logger.warning("Не удалось получить трек %s: %s", identifier, type(error).__name__)
+                logger.debug("Не удалось получить трек %s: %s", identifier, type(error).__name__)
                 yield PlaylistEntry(index, identifier, error=error)
             else:
                 yield PlaylistEntry(index, identifier, track=track)

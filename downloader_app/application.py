@@ -51,7 +51,9 @@ def run_download(options: CliOptions, token: str) -> int:
     engine.check_available()
     provider = YandexProvider.from_token(token)  # Получаем тонкий клиент по токену
     queue = DownloadQueue(DownloadService(provider, engine))
-    download_options = DownloadOptions(overwrite=options.overwrite, bitrate=options.bitrate)
+    download_options = DownloadOptions(
+        overwrite=options.overwrite, bitrate=options.bitrate, path_template=options.path_template
+    )
     failed = populate_queue(queue, provider, options.source, download_options)  # наполняем очередь
 
     # Гарантировано по цепочке закроем все контексты и aria процесс
