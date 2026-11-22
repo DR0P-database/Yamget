@@ -10,8 +10,10 @@ from yandex_music import Track
 
 from music_download.engine import Aria2Engine, DownloadProgress
 from music_download.formats import get_download_format, select_download_info
+from music_download.index import LibraryIndex
 from music_download.models import DownloadContext, DownloadOptions, DownloadResult, TrackMetadata
 from music_download.paths import ensure_inside, select_target_path
+from music_download.relocation import relocate_file
 from music_download.tags import write_tags
 
 if TYPE_CHECKING:
@@ -23,15 +25,22 @@ _DEFAULT_OPTIONS = DownloadOptions()
 
 
 class DownloadService:
-    def __init__(self, provider: YandexProvider, engine: Aria2Engine | None = None):
+    def __init__(
+        self,
+        provider: YandexProvider,
+        engine: Aria2Engine | None = None,
+        index: LibraryIndex | None = None,
+    ):
         """Создать сервис скачивания.
 
         :param provider: API-провайдер музыкальных данных.
+        :param index: Общий индекс команды; жизненным циклом управляет вызывающий код.
         :param engine: Движок загрузки; при None создаётся Aria2Engine.
             Запуском и закрытием движка управляет вызывающий код.
         """
         self.provider = provider
         self.engine = engine or Aria2Engine()
+        self.index = index
 
     def download(
         self,
@@ -65,14 +74,22 @@ class DownloadService:
         audio_format = get_download_format(options.container)  # TODO: Добавить FLAC, m4a
 
         track = context.track
+        album_id = str(context.album.id) if context.album.id is not None else None
         logger.info("Обработка трека %s", track.id)
         directory = Path(directory)
+        if self.index is not None and directory.resolve() != self.index.directory:
+            raise ValueError("Корень индекса не совпадает с каталогом загрузки")
         target = select_target_path(
             directory, context, options.path_template, audio_format.extension
         )
         if target.is_file() and target.stat().st_size > 0 and not options.overwrite:
-            logger.info("Трек %s уже скачан, пропуск", track.id)
             return DownloadResult(track, target, skipped=True)
+
+        if self.index is not None and not options.overwrite:
+            existing = self.index.find(str(track.id), album_id)
+            if existing is not None:
+                relocate_file(existing, target, self.index, check_cancelled)
+                return DownloadResult(track, target, relocated=True)
 
         info = select_download_info(track, audio_format, options.bitrate)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -97,6 +114,8 @@ class DownloadService:
         finally:
             temporary.unlink(missing_ok=True)
             Path(str(temporary) + ".aria2").unlink(missing_ok=True)
+        if self.index is not None:
+            self.index.record(target, str(track.id), album_id)
         logger.info("Трек %s сохранён", track.id)
         return DownloadResult(track, target)
 

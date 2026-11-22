@@ -35,11 +35,11 @@ _EMPTY_METADATA = TrackMetadata()
 _DEFAULT_OPTIONS = DownloadOptions()
 
 
-def read_track_id(path: Path) -> str | None:
-    """Прочитать ID Яндекс Музыки из ссылки WOAF в MP3.
+def read_track_source(path: Path) -> Source | None:
+    """Прочитать ID трека и выбранного альбома из ссылки WOAF в MP3.
 
     :param path: Путь существующего MP3-файла.
-    :returns: ID трека либо None, если нет ID3-заголовка или подходящей ссылки.
+    :returns: Источник либо None, если нет ID3-заголовка или подходящей ссылки.
     :raises OSError: Файл не удалось прочитать.
     :raises mutagen.MutagenError: ID3-теги повреждены и не могут быть разобраны.
     """
@@ -54,8 +54,14 @@ def read_track_id(path: Path) -> str | None:
         except ValueError:
             continue
         if source.track_id is not None:
-            return source.track_id
+            return source
     return None
+
+
+def read_track_id(path: Path) -> str | None:
+    """Прочитать ID трека из WOAF; отсутствие подходящей ссылки обозначается None."""
+    source = read_track_source(path)
+    return source.track_id if source is not None else None
 
 
 def full_title(item: Track | Album) -> str:

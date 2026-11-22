@@ -13,7 +13,7 @@ build-backend = "hatchling.build"
 dev-mode-exact = true
 
 [tool.hatch.build.targets.wheel]
-only-include = ["__init__.py", "engine.py", "formats.py", "models.py", "paths.py", "queue.py", "service.py", "sources.py", "tags.py", "providers"]
+only-include = ["__init__.py", "engine.py", "formats.py", "index.py", "relocation.py", "models.py", "paths.py", "queue.py", "service.py", "sources.py", "tags.py", "providers"]
 
 [tool.hatch.build.targets.wheel.sources]
 "" = "music_download"

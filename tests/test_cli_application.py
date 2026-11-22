@@ -80,12 +80,15 @@ class CliApplicationTests(unittest.TestCase):
             patch("downloader_app.application.Aria2Engine"),
             patch("downloader_app.application.YandexProvider"),
             patch("downloader_app.application.DownloadService"),
+            patch("downloader_app.application.LibraryIndex") as index,
             patch("downloader_app.application.DownloadQueue") as queue,
             patch("downloader_app.application.populate_queue", return_value=0),
             patch("downloader_app.application.report_job", return_value=True),
         ):
             queue.return_value.run.return_value = jobs
             self.assertEqual(run_download(options, "token"), 1)
+        index.return_value.__enter__.return_value.scan.assert_called_once()
+        index.return_value.__exit__.assert_called_once()
         jobs.close.assert_called_once()
         queue.return_value.run.assert_called_once_with(options.output)
 

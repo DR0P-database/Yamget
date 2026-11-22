@@ -4,6 +4,7 @@ import logging
 from contextlib import closing
 
 from music_download.engine import Aria2Engine
+from music_download.index import LibraryIndex
 from music_download.models import DownloadContext, DownloadOptions
 from music_download.providers.yandex import YandexProvider
 from music_download.queue import DownloadQueue
@@ -50,15 +51,19 @@ def run_download(options: CliOptions, token: str) -> int:
     engine = Aria2Engine()
     engine.check_available()
     provider = YandexProvider.from_token(token)  # Получаем тонкий клиент по токену
-    queue = DownloadQueue(DownloadService(provider, engine))
-    download_options = DownloadOptions(
-        overwrite=options.overwrite, bitrate=options.bitrate, path_template=options.path_template
-    )
-    failed = populate_queue(queue, provider, options.source, download_options)  # наполняем очередь
+    with LibraryIndex(options.output) as index:
+        index.scan()
+        queue = DownloadQueue(DownloadService(provider, engine, index=index))
+        download_options = DownloadOptions(
+            overwrite=options.overwrite,
+            bitrate=options.bitrate,
+            path_template=options.path_template,
+        )
+        failed = populate_queue(queue, provider, options.source, download_options)
 
-    # Гарантировано по цепочке закроем все контексты и aria процесс
-    with closing(queue.run(options.output)) as jobs:
-        for job in jobs:
-            failed += report_job(job)
+        # Закрытие генератора завершает очередь и процесс aria2.
+        with closing(queue.run(options.output)) as jobs:
+            for job in jobs:
+                failed += report_job(job)
     logger.info("Обработка завершена: ошибок=%d", failed)
     return 1 if failed else 0

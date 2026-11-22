@@ -60,3 +60,4 @@ class DownloadResult:
     track: Track
     path: Path
     skipped: bool = False
+    relocated: bool = False

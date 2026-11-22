@@ -1,6 +1,7 @@
 """Точка входа CLI и коды завершения процесса."""
 
 import logging
+import sqlite3
 from collections.abc import Sequence
 
 from .arguments import parse_options
@@ -40,7 +41,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         exit_code = run_download(options, token)
         logger.info("CLI завершён: код=%d", exit_code)
         return exit_code
-    except (YandexMusicError, MutagenError, ValueError, OSError) as error:
+    except (YandexMusicError, MutagenError, ValueError, OSError, sqlite3.Error) as error:
         logger.error("Загрузка завершилась ошибкой: %s", describe_error(error))
         return 1
     except KeyboardInterrupt:

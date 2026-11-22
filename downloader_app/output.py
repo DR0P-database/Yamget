@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from music_download.providers.yandex import ResourceError
+from music_download.relocation import RelocationError
 
 if TYPE_CHECKING:
     from music_download.queue import DownloadJob
@@ -16,7 +17,11 @@ logger = logging.getLogger(__name__)
 
 def describe_error(error: Exception) -> str:
     """Показать известную причину, не раскрывая произвольный ответ API."""
-    return error.reason if isinstance(error, ResourceError) else type(error).__name__
+    if isinstance(error, ResourceError):
+        return error.reason
+    if isinstance(error, RelocationError):
+        return str(error)
+    return type(error).__name__
 
 
 def report_track_error(track_id: str, error: Exception) -> None:
@@ -36,6 +41,9 @@ def report_job(job: DownloadJob) -> bool:
     if job.result is None:
         raise ValueError(f"Нет результата загрузки трека {job.context.track.id}")
 
-    status = "Пропущен" if job.result.skipped else "Скачан"
+    if job.result.relocated:
+        status = "Перенесён"
+    else:
+        status = "Пропущен" if job.result.skipped else "Скачан"
     logger.info("%s: %s", status, job.result.path)
     return False
