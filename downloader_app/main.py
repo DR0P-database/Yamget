@@ -2,9 +2,12 @@
 
 import logging
 import sqlite3
+import sys
 from collections.abc import Sequence
+from pathlib import Path
 
-from .arguments import parse_options
+from .arguments import create_parser, parse_options
+from .auth import TOKEN_KEY, authorize_and_save, load_local_token
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +41,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     from .output import describe_error
 
     try:
+        if not token:
+            env_path = Path(".env")
+            token = load_local_token(env_path)
+            if not token:
+                if not sys.stdin.isatty():
+                    create_parser().error(
+                        f"Задайте {TOKEN_KEY} или запустите Yamget в терминале для входа"
+                    )
+                token = authorize_and_save(env_path)
+                logger.info("Токен Яндекс Музыки сохранён в .env")
         exit_code = run_download(options, token)
         logger.info("CLI завершён: код=%d", exit_code)
         return exit_code

@@ -2,7 +2,7 @@
 name = "music-download"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["yandex-music", "mutagen>=1.47", "pathvalidate>=3.3,<4"]
+dependencies = ["yandex-music>=3.2.2", "mutagen>=1.47", "pathvalidate>=3.3,<4"]
 
 
 [build-system]

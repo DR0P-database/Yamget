@@ -12,6 +12,8 @@ from pathlib import Path
 from music_download.paths import DEFAULT_TEMPLATE, PathTemplate
 from music_download.sources import Source, positive_id
 
+from .auth import TOKEN_KEY
+
 logger = logging.getLogger(__name__)
 
 
@@ -88,7 +90,7 @@ def resolve_source(args: argparse.Namespace) -> Source:
     return source
 
 
-def parse_options(argv: Sequence[str] | None = None) -> tuple[CliOptions, str]:
+def parse_options(argv: Sequence[str] | None = None) -> tuple[CliOptions, str | None]:
     parser = create_parser()
     args = parser.parse_args(argv)
     try:
@@ -96,9 +98,7 @@ def parse_options(argv: Sequence[str] | None = None) -> tuple[CliOptions, str]:
     except ValueError as error:
         parser.error(str(error))
 
-    token = os.environ.get("YANDEX_MUSIC_TOKEN")
-    if not token or not token.strip():
-        parser.error("Задайте переменную окружения YANDEX_MUSIC_TOKEN")
+    token = os.environ.get(TOKEN_KEY, "").strip() or None
 
     logger.debug("Аргументы проверены: тип источника=%s", source.kind)
     return CliOptions(

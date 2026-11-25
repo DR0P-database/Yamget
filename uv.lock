@@ -217,7 +217,7 @@ dependencies = [
 requires-dist = [
     { name = "mutagen", specifier = ">=1.47" },
     { name = "pathvalidate", specifier = ">=3.3,<4" },
-    { name = "yandex-music" },
+    { name = "yandex-music", specifier = ">=3.2.2" },
 ]
 
 [[package]]
